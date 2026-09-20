@@ -172,6 +172,27 @@ class TestShouldExclude:
         assert _should_exclude(Path("profiles/clean/models/big.gguf"))
         assert _should_exclude(Path("profiles/clean/runtimes/llamacpp/x.dll"))
 
+    def test_excludes_browser_use_profiles_only_at_profile_home_roots(self):
+        """Browser Use credential stores are excluded at each HERMES_HOME root,
+        while user directories with the same names remain backup data."""
+        from hermes_cli.backup import _should_exclude
+
+        for rel in (
+            "browser_profiles/Default/Cookies",
+            "browser-profile/chrome/Default/Login Data",
+            "profiles/work/browser_profiles/Default/Cookies",
+            "profiles/work/browser-profile/chrome/Default/Login Data",
+        ):
+            assert _should_exclude(Path(rel))
+
+        for rel in (
+            "skills/browser_profiles/reference.md",
+            "projects/browser-profile/notes.txt",
+            "profiles/work/skills/browser_profiles/example.txt",
+            "profiles/work/projects/browser-profile/notes.txt",
+        ):
+            assert not _should_exclude(Path(rel))
+
     def test_excludes_regenerable_cache_but_keeps_durable_artifacts(self):
         """Catalogs and live browser profiles are rebuilt on demand; delivered media and the
         citation ledger are not, so they stay in the archive."""
