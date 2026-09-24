@@ -353,6 +353,58 @@ class TestUnverifiedDeliveryIsRecordedOnTheJob:
 
 
 
+class TestStandaloneDeliveryEvidence:
+    """Standalone sends must not claim delivery without positive receipt evidence."""
+
+    @staticmethod
+    def _deliver_standalone(sender):
+        with patch("gateway.config.load_gateway_config", return_value=_gateway_config()), \
+             patch("cron.scheduler.load_config", return_value={"cron": {"wrap_response": False}}), \
+             patch("cron.scheduler_delivery._record_delivery_verification", side_effect=_record_verification), \
+             patch("tools.send_message_tool._send_to_platform", sender):
+            return _deliver_result(_job(), "Nightly report.")
+
+    @pytest.mark.parametrize("result", [
+        {},
+        {"success": True},
+        {"success": True, "message_id": None},
+        {"success": True, "raw_response": None},
+    ])
+    def test_missing_receipt_records_target_as_unverified(self, result, caplog):
+        RECORDED_VERIFICATION.clear()
+        async def sender(*_args, **_kwargs):
+            return result
+        with caplog.at_level(logging.WARNING, logger="cron.scheduler"):
+            error = self._deliver_standalone(sender)
+        assert error is None
+        assert RECORDED_VERIFICATION == [(
+            "92e639af907f", [f"telegram:{CHAT_ID} (standalone: no receipt evidence)"])]
+        assert "UNVERIFIED" in caplog.text
+        assert "delivered to" not in caplog.text
+        assert "without receipt evidence" in caplog.text
+
+    def test_message_id_records_verified_target(self, caplog):
+        RECORDED_VERIFICATION.clear()
+        async def sender(*_args, **_kwargs):
+            return {"success": True, "message_id": "standalone-123"}
+        with caplog.at_level(logging.INFO, logger="cron.scheduler"):
+            error = self._deliver_standalone(sender)
+        assert error is None
+        assert RECORDED_VERIFICATION == [("92e639af907f", [])]
+        assert "delivered to telegram" in caplog.text
+        assert "message_id=standalone-123" in caplog.text
+
+    def test_error_result_does_not_log_delivery(self, caplog):
+        RECORDED_VERIFICATION.clear()
+        async def sender(*_args, **_kwargs):
+            return {"success": False, "error": "send failed"}
+        with caplog.at_level(logging.INFO, logger="cron.scheduler"):
+            error = self._deliver_standalone(sender)
+        assert error is not None
+        assert "delivered to" not in caplog.text
+        assert RECORDED_VERIFICATION == [("92e639af907f", [])]
+
+
 class TestStandaloneSendIsBounded:
     """The standalone fallback lane must not wait on its send unbounded (#115469).
 

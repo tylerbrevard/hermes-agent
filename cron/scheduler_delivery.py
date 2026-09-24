@@ -1766,13 +1766,31 @@ def _deliver_standalone(
         msg = f"delivery warning: {_w} (target {t.where})"
         logger.error("Job '%s': %s", job["id"], msg)
         delivery_errors.append(msg)
-    logger.info("Job '%s': delivered to %s:%s", job["id"], t.platform_name, t.chat_id)
-    # Thread seeding only happens on the live lane, so no thread_seeded gate applies here.
-    _maybe_mirror_cron_delivery(
-        job, t.platform_name, t.chat_id, t.mirror_text, thread_id=t.thread_id,
-        user_id=t.origin_user_id,
-        enabled=t.mirror_this_target)
 
+    # The standalone lane previously claimed delivery for every exception-free call. A bot/API
+    # sender normally returns a message ID; some platform APIs return a successful raw response.
+    # Preserve their success path, but record ack-only results as unverified so cron list/doctor can
+    # distinguish an unconfirmed send from a receipt-backed delivery.
+    receipt_id = result.get("message_id") if isinstance(result, dict) else None
+    receipt_evidence = bool(
+        receipt_id or (
+            isinstance(result, dict) and result.get("success") is True and result.get("raw_response")))
+    if not receipt_evidence:
+        job.setdefault("_standalone_delivery_unverified", []).append(
+            f"{t.where} (standalone: no receipt evidence)")
+        logger.warning(
+            "Job '%s': standalone sender returned no delivery receipt for %s; "
+            "treating as accepted but UNVERIFIED",
+            job["id"], t.where,
+        )
+    if receipt_evidence:
+        logger.info(
+            "Job '%s': delivered to %s:%s via standalone message_id=%s",
+            job["id"], t.platform_name, t.chat_id, receipt_id or "raw_response")
+    else:
+        logger.warning(
+            "Job '%s': standalone sender accepted message to %s:%s without receipt evidence — UNVERIFIED",
+            job["id"], t.platform_name, t.chat_id)
 
 def _prepare_target_delivery(
     job: dict, target: dict, *, adapters, loop, config, notify_delivery: bool, mirror_enabled: bool,
@@ -2052,6 +2070,7 @@ def _deliver_result(
         job["_notification_all_targets_suppressed"] = True
     else:
         delivery_errors.extend(policy_drop_errors)
+    unverified_targets.extend(job.pop("_standalone_delivery_unverified", []))
     _record_delivery_verification(job, unverified_targets)
     return "; ".join(delivery_errors) if delivery_errors else None
 
