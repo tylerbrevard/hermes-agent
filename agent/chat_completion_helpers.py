@@ -2553,7 +2553,11 @@ class _BedrockStream:
                 completed_response_predicate=lambda response: bool(getattr(response, "choices", None)),
                 metadata=_relay_stream_metadata(agent, "custom"), defer_logical_completion=True)
             wants_reasoning = agent.reasoning_callback or agent.stream_delta_callback or plugin_reasoning_observer
-            streamed_response = stream_converse_with_callbacks({"stream": stream},
+            # A parked final_response (IAM-denied converse() fallback, shims that ignore
+            # stream=True) means the iterator is empty BY CONTRACT — the callbacks pass
+            # would misread that as a truncated stream (#109988).
+            streamed_response = stream.final_response if stream.final_response is not None else stream_converse_with_callbacks(
+                {"stream": stream},
                 on_text_delta=self._after_first(agent._fire_stream_delta) if agent._has_stream_consumers() else None,
                 on_tool_start=self._after_first(agent._fire_tool_gen_started),
                 on_reasoning_delta=self._after_first(agent._fire_reasoning_delta) if wants_reasoning else None,

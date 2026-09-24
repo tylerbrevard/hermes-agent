@@ -926,6 +926,8 @@ def stream_converse_with_callbacks(
     current_text_buffer: List[str] = []
     has_tool_use = False
     stop_reason = "end_turn"
+    saw_message_stop = False
+    interrupted = False
     usage_data: Dict[str, int] = {}
 
     def block_index(payload: Dict[str, Any], *, new_block: bool = False) -> int:
@@ -946,6 +948,7 @@ def stream_converse_with_callbacks(
             with suppress(Exception):
                 on_event()
         if on_interrupt_check and on_interrupt_check():
+            interrupted = True
             break
         if "contentBlockStart" in event:
             start_event = event["contentBlockStart"]
@@ -988,11 +991,18 @@ def stream_converse_with_callbacks(
             else:
                 flush_text()
         elif "messageStop" in event:
+            saw_message_stop = True
             stop_reason = event["messageStop"].get("stopReason", "end_turn")
         elif "metadata" in event:
             meta_usage = event["metadata"].get("usage", {})
             usage_data = {key: meta_usage.get(key, 0) for key in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheWriteInputTokens")}
     flush_text()
+    if not saw_message_stop and not interrupted:
+        # A valid HTTP 200 EventStream can end before messageStop (proxy/EOF
+        # truncation) — that is an incomplete provider response, not a stop.
+        raise RuntimeError(
+            "bedrock: converse stream ended before messageStop — incomplete provider response"
+        )
     return parts.build([stream_blocks[i] for i in sorted(stream_blocks)], usage_data, stop_reason, "")
 
 
