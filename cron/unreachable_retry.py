@@ -65,10 +65,27 @@ def _is_recurring(job: Dict[str, Any]) -> bool:
     return job.get("schedule", {}).get("kind") in {"cron", "interval"}
 
 
+def _final_allowed_run(job: Dict[str, Any]) -> bool:
+    """True when the run being marked will consume the finite repeat limit's last
+    allowance: ``_advance_after_run`` increments ``repeat.completed`` and retires the
+    record before ``plan_retry`` is consulted, and the terminal guard in
+    ``mark_job_run`` then skips the re-run — no retry can follow this failure."""
+    repeat = job.get("repeat")
+    if not isinstance(repeat, dict):
+        return False
+    times = repeat.get("times")
+    if times is None or int(times) <= 0:
+        return False  # unlimited (None) mirrors _advance_after_run's finiteness test
+    completed = int(repeat.get("completed") or 0)
+    return completed + 1 >= int(times)
+
+
 def will_retry(job: Dict[str, Any]) -> bool:
     """Predict whether ``plan_retry`` will schedule a re-run for this flagged failure —
     used by the scheduler to suppress the interim failure notice."""
     if not _is_recurring(job) or job.get("state") == "paused":
+        return False
+    if _final_allowed_run(job):
         return False
     state = job.get(STATE_KEY) or {}
     if int(state.get("attempt") or 0) >= len(RETRY_DELAYS_SECONDS):
