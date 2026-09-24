@@ -67,8 +67,27 @@ def _seed_modpack_sessions(db):
 
 
 class TestFormatTimestamp:
-    def test_formats_unix_and_passes_through_the_rest(self):
-        assert "2023" in _format_timestamp(1700000000)
+    def test_formats_unix_and_iso_times_consistently(self):
+        import os
+        import time
+
+        previous_tz = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "UTC"
+            if hasattr(time, "tzset"):
+                time.tzset()
+            unix = _format_timestamp(1700000000)
+            iso = _format_timestamp("2023-11-14T22:13:20+00:00")
+        finally:
+            if previous_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = previous_tz
+            if hasattr(time, "tzset"):
+                time.tzset()
+
+        assert unix == iso
+        assert "2023" in iso
         assert _format_timestamp(None) == "unknown"
         assert _format_timestamp("not-a-number-string") == "not-a-number-string"
 
