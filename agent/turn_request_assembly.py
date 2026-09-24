@@ -13,7 +13,7 @@ from dataclasses import dataclass
 import logging
 from typing import Any
 
-from agent.message_sanitization import _sanitize_messages_surrogates
+from agent.message_sanitization import _sanitize_messages_media_markers, _sanitize_messages_surrogates
 from agent.usage_anchor import anchored_context_tokens
 from agent.prompt_caching import build_prompt_cache_plan, effective_cache_ttl
 from agent.turn_context import build_api_messages
@@ -185,7 +185,13 @@ def assemble_api_request(
 
     # Strip lone surrogates (U+D800-U+DFFF) that some Ollama-served models emit;
     # they crash json.dumps() inside the OpenAI SDK and trigger the 3-retry cycle.
+    # Media-marker neutralization runs in the same pass's spot (#108760): a llama.cpp
+    # server's own randomized media_marker, quoted into the transcript as plain text by
+    # a /props dump, wedges every later turn with HTTP 400 "Failed to tokenize prompt" —
+    # the server splits the prompt on that exact marker and expects a bitmap per piece.
+    # API copy only; the stored transcript keeps the real bytes.
     _sanitize_messages_surrogates(api_messages)
+    _sanitize_messages_media_markers(api_messages)
 
     # No send-time pad loop here: ``repair_empty_non_final_messages`` (inside
     # ``_sanitize_api_messages``) is the single owner of empty-turn repair.

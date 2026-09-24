@@ -24,6 +24,7 @@ import json
 
 import agent.conversation_loop as cl
 from agent.message_sanitization import (
+    _sanitize_messages_media_markers,
     _sanitize_messages_non_ascii,
     _sanitize_messages_surrogates,
 )
@@ -31,6 +32,7 @@ from agent.message_sanitization import (
 TRUNCATED_ARGS = '{"content": "# chapter draft\\nline one'  # unrepairable
 VALID_ARGS = json.dumps({"path": "a.txt", "text": "héllo"})
 LONE_SURROGATE = "hello \ud83d world"
+MEDIA_MARKER = "<__media_CROZLhoWqzum1cQTzZQKMYA9gqWTHJ3E__>"  # #108760
 
 
 def _adversarial_history():
@@ -83,6 +85,7 @@ def _run_full_pipeline(api_messages):
             am["content"] = am["content"].strip()
     cl._canonicalize_api_tool_calls(api_messages)
     _sanitize_messages_surrogates(api_messages)
+    _sanitize_messages_media_markers(api_messages)
     _sanitize_messages_non_ascii(api_messages)
 
 
@@ -103,6 +106,7 @@ class TestSendPathNeverMutatesHistory:
         transforms = {
             "canonicalize/repair": cl._canonicalize_api_tool_calls,
             "surrogate sanitizer": _sanitize_messages_surrogates,
+            "media-marker sanitizer": _sanitize_messages_media_markers,
             "non-ascii sanitizer": _sanitize_messages_non_ascii,
         }
         for name, fn in transforms.items():

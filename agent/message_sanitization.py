@@ -22,6 +22,18 @@ logger = logging.getLogger(__name__)
 # CLI paste scrubbing.
 _SURROGATE_RE = re.compile(r'[\ud800-\udfff]')
 
+# llama.cpp / llama-server media markers (#108760). The server's multimodal placeholder is
+# randomized per process start (``media_marker`` in ``/props``); the server splits every
+# outgoing prompt on that exact string and expects one attached bitmap per piece, so a marker
+# quoted into the transcript as PLAIN TEXT (a tool result dumping /props, a log line) makes
+# every later turn fail with a non-retryable HTTP 400 "Failed to tokenize prompt" — mtmd
+# rejects a marker with no image behind it. Fixed ``<__media__>`` / ``<__image__>`` spellings
+# are older builds. Neutralized, never escaped: genuine images travel as structured
+# ``image_url`` parts and the server inserts its own marker, so the only text this matches is
+# a marker quoted as plain text — inert once the split token is gone.
+_MEDIA_MARKER_RE = re.compile(r'<__(?:media|image)(?:_[A-Za-z0-9_-]+)?__>')
+_MEDIA_MARKER_PLACEHOLDER = "[media-marker removed]"
+
 # Keys handled explicitly by _sanitize_messages; every OTHER key is swept generically.
 _MESSAGE_CORE_KEYS = frozenset({"content", "name", "tool_calls", "role"})
 
@@ -33,6 +45,18 @@ def _sanitize_surrogates(text: str) -> str:
     if text.isascii():
         return text
     return _SURROGATE_RE.sub('\ufffd', text)
+
+
+def _neutralize_media_markers(text: str) -> str:
+    """Replace llama.cpp media markers with an inert placeholder; no-op when none present.
+
+    See ``_MEDIA_MARKER_RE`` — the ONLY strings this rewrites are markers quoted as
+    plain text (a /props dump, a log line); a real image never carries one. Runs on the
+    per-call API copy, so the stored transcript keeps the bytes the tool returned.
+    """
+    if "<__" not in text:
+        return text
+    return _MEDIA_MARKER_RE.sub(_MEDIA_MARKER_PLACEHOLDER, text)
 
 
 # OpenAI / Anthropic / Responses all bound ``function.name`` to this; one poisoned stored name
@@ -125,6 +149,8 @@ def _sanitize_messages(messages: list, fix: Callable[[str], str], *, deep: bool)
 # (tool_call ids, nested reasoning_details); the ASCII-only-locale strip is shallow.
 _sanitize_structure_surrogates = partial(_sanitize_structure, fix=_sanitize_surrogates)
 _sanitize_messages_surrogates = partial(_sanitize_messages, fix=_sanitize_surrogates, deep=True)
+_sanitize_structure_media_markers = partial(_sanitize_structure, fix=_neutralize_media_markers)
+_sanitize_messages_media_markers = partial(_sanitize_messages, fix=_neutralize_media_markers, deep=True)
 _sanitize_structure_non_ascii = partial(_sanitize_structure, fix=_strip_non_ascii)
 _sanitize_messages_non_ascii = partial(_sanitize_messages, fix=_strip_non_ascii, deep=False)
 _sanitize_tools_non_ascii = _sanitize_structure_non_ascii
@@ -446,6 +472,7 @@ def _looks_like_corrupt_image_rejection(error_body: str) -> bool:
 __all__ = [
     "_SURROGATE_RE", "close_interrupted_tool_sequence",
     "_sanitize_surrogates", "_sanitize_structure_surrogates", "_sanitize_messages_surrogates",
+    "_neutralize_media_markers", "_sanitize_structure_media_markers", "_sanitize_messages_media_markers",
     "coerce_tool_name",
     "_escape_invalid_chars_in_json_strings", "_repair_tool_call_arguments",
     "_strip_non_ascii", "_sanitize_messages_non_ascii", "_sanitize_tools_non_ascii",
